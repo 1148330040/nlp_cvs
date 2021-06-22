@@ -9,9 +9,6 @@
 import json
 import redis
 
-
-from SqlLink import sql_interactive
-from Models.bert_crf import fit_dataset, predict, get_slot
 from SlotProcess.slot_process import slot_match, slot2add, slot2tips
 
 slot_tem_address = redis.Redis(host=str('127.0.0.1'), port=int(6379))

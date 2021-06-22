@@ -45,7 +45,7 @@ def get_QA_dataset():
     dataset_path = '../Dataset/dataset_dz/'
 
     nan_files = ['羟丙基甲基纤维素制造', '氧化铝', '炼油与石油化工']
-    nan_problems = ['节能环保政策', '智能制造政策', '智能化提升']
+    # nan_problems = ['节能环保政策', '智能制造政策', '智能化提升']
     # 目前数据不存在这三种问题类型
 
     dataset_4col = pd.DataFrame()
