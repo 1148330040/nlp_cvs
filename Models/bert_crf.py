@@ -112,11 +112,17 @@ class MyBertCrf(tf.keras.Model):
         self.dense = tf.keras.layers.Dense(self.output_dim)
         self.other_params = tf.Variable(tf.random.uniform(shape=(output_dim, output_dim)))
 
-    @tf.function
+    @tf.function(input_signature=[tf.TensorSpec([None, 128], name='ids', dtype=tf.int32),
+                                  tf.TensorSpec([None, 128], name='mask', dtype=tf.int32),
+                                  tf.TensorSpec([None, 128], name='tokens', dtype=tf.int32),
+                                  tf.TensorSpec([None, 128], name='target', dtype=tf.int32),
+                                  tf.TensorSpec([1], name='input_seq_len', dtype=tf.int32)])
     def call(self, ids, masks, tokens, target, input_seq_len):
         hidden = self.bert(ids, masks, tokens)[0]
         dropout_inputs = self.dropout(hidden, 1)
         logistic_seq = self.dense(dropout_inputs)
+        print(hidden)
+        print(ids, masks, tokens, target, input_seq_len)
         if self.use_crf:
             log_likelihood, self.other_params = tfa.text.crf.crf_log_likelihood(logistic_seq,
                                                                                 target,
@@ -191,6 +197,11 @@ def fit_dataset(dataset, use_crf, input_dim, output_dim, fit=True):
         input_seq_len = tf.reduce_sum(masks, axis=1)
 
         with tf.GradientTape() as tp:
+            ids = tf.cast(ids, dtype=tf.int32)
+            masks = tf.cast(masks, dtype=tf.int32)
+            tokens = tf.cast(tokens, dtype=tf.int32)
+            target = tf.cast(target, dtype=tf.int32)
+            input_seq_len = tf.cast(input_seq_len, dtype=tf.int32)
             predict_seq, log_likelihood, crf_scores = bert_crf(ids, masks, tokens, target, input_seq_len)
             if use_crf:
                 loss_value = get_loss(log_likelihood)
@@ -332,8 +343,7 @@ def get_slot(keywords, predict_label):
     return key_words
 
 # predict(content='你知道铸造行业树脂砂铸造类型中的焊接对于环境有那些危害')
-# test_data = data_process.test_flow_dataset()
-# train = test_data[:11200]
-# test = test_data[11200:]
-# fit_dataset(dataset=train, use_crf=True, input_dim=vocab_size, output_dim=num_class, fit=True)
-
+test_data = data_process.test_flow_dataset()
+train = test_data[:1600]
+test = test_data[1600:]
+fit_dataset(dataset=train, use_crf=True, input_dim=vocab_size, output_dim=num_class, fit=True)

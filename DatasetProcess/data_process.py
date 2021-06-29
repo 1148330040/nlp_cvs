@@ -302,7 +302,7 @@ def test_flow_dataset():
         l_dtl = str(dtl)
         c_dtl = str(dtl)
         if 'c' not in dtl:
-            for i in range(2000):
+            for i in range(200):
                 d4_ = d4.sample(n=1)
                 industry = d4_['industry'].values[0]
                 process = d4_['process'].values[0]
@@ -310,7 +310,7 @@ def test_flow_dataset():
                 labels.append(l_dtl.replace('a', str(len(industry) * 'A'))
                               .replace('d', str(len(process) * 'D')))
         else:
-            for i in range(2000):
+            for i in range(200):
                 d5_ = d5.sample(n=1)
                 industry = d5_['industry'].values[0]
                 process_type = d5_['process_type'].values[0]
@@ -329,16 +329,3 @@ def test_flow_dataset():
     )
 
     return test_data
-
-import tensorflow as tf
-
-step_type = tf.convert_to_tensor(
-    [0], dtype=tf.int32, name='step_type')
-reward = tf.convert_to_tensor(
-    [0], dtype=tf.float32, name='reward')
-discount = tf.convert_to_tensor(
-    [1], dtype=tf.float32, name='discount')
-observations = tf.convert_to_tensor(
-    [123], dtype=tf.float64, name='observations')
-
-print(step_type)
