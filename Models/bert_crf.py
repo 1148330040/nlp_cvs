@@ -17,7 +17,7 @@ import tensorflow_addons as tfa
 from datetime import datetime
 from sklearn.metrics import f1_score
 from transformers import BertTokenizer, TFBertModel
-
+from DatasetProcess import data_process
 
 epochs = 4
 max_len = 128
@@ -31,9 +31,9 @@ vocab_size = len(tokenizer.get_vocab())
 time_month = datetime.now().month
 time_day = datetime.now().day
 
-log_dir = f'model_save/logs/'
-bert_crf_ckpt = f'model_save/{6}-{11}/bert_crf_checkpoint'
-bert_ckpt = f'model_save/{time_month}-{time_day}/bert_checkpoint'
+log_dir = f'../ModelCkpt/model_save/logs/'
+bert_crf_ckpt = f'../ModelCkpt/model_save/bert_crf_checkpoint'
+bert_ckpt = f'../ModelCkpt/model_save/{time_month}-{time_day}/bert_checkpoint'
 
 dirs = [log_dir, bert_crf_ckpt, bert_ckpt]
 for file in dirs:
@@ -43,7 +43,6 @@ for file in dirs:
 
 # todo 适配对话数据的编码
 num_class = len(['O', 'B-IND', 'B-QT', 'B-PST', 'B-PS']) + 1
-# num_class = len(['O', 'I-LOC', 'B-LOC', 'I-ORG', 'B-ORG', 'B-PER', 'I-PER']) + 1
 
 
 def labels4seq(data, id2seq=False):
@@ -54,13 +53,6 @@ def labels4seq(data, id2seq=False):
     else:
         label_seq = {
             '1': 'O', '2': 'B-IND', '3': 'B-QT', '4': 'B-PST', '5': 'B-PS', '0': ''}
-
-    # if not id2seq:
-    #     label_seq = {
-    #         'O': 1, 'I-LOC': 2, 'B-LOC': 3, 'I-ORG': 4, 'B-ORG': 5, 'B-PER': 6, 'I-PER': 7}
-    # else:
-    #     label_seq = {
-    #         '1': 'O', '2': 'I-LOC', '3': 'B-LOC', '4': 'I-ORG', '5': 'B-ORG', '6': 'B-PER', '7': 'I-PER', '0': ''}
 
     label = [label_seq[i] for i in data]
 
@@ -280,15 +272,16 @@ def predict(content, crf=True):
                                    padding='max_length',
                                    return_token_type_ids=True)
 
-    input_id = tf.constant([inputs['input_ids']])
-    input_mask = tf.constant([inputs['attention_mask']])
-    token_type_ids = tf.constant([inputs["token_type_ids"]])
+    input_id = tf.constant([inputs['input_ids']], dtype=tf.int32)
+    input_mask = tf.constant([inputs['attention_mask']], dtype=tf.int32)
+    token_type_ids = tf.constant([inputs["token_type_ids"]], dtype=tf.int32)
 
     label_length = len(content)
-    label = tf.constant([max_len * [0]])
-    input_seq_len = tf.reduce_sum(input_mask, axis=1)
+    label = tf.constant([max_len * [0]], dtype=tf.int32)
+    input_seq_len = tf.constant(tf.reduce_sum(input_mask, axis=1), dtype=tf.int32)
 
     bert_crf = MyBertCrf(use_crf=crf, input_dim=vocab_size, output_dim=num_class)
+    print(bert_crf)
     checkpoint = tf.train.Checkpoint(model=bert_crf)
 
     if crf:
@@ -297,8 +290,8 @@ def predict(content, crf=True):
         model_ckpt = bert_ckpt
 
     checkpoint.restore(tf.train.latest_checkpoint(model_ckpt))
+    predict_label, _, _ = bert_crf.call(input_id, input_mask, token_type_ids, label, input_seq_len)
 
-    predict_label, _, _ = bert_crf(input_id, input_mask, token_type_ids, label, input_seq_len)
     if not crf:
         predict_label = tf.argmax(predict_label, axis=-1)
 
@@ -316,14 +309,14 @@ def predict(content, crf=True):
     return keywords, predict_label
 
 
-def get_slot(content, predict_label):
+def get_slot(keywords, predict_label):
     """
     考虑到数据特点关键词是以词组的形式出现, 为了准确的找到关键词对应的代码(a,b,c,d)
     因此使用zip数组将keywords和predict连接在一起
     设置一个字典, 代码(a,b,c,d)作为key, 值为一个列表, 因此一个代码可以添加多个对应关键词
     """
-    content = ''.join(i if i != ' ' else '' for i in content)
-    keywords_list = re.findall(pattern='[\u4e00-\u9fa5]+', string=content)
+    keywords = ''.join(i if i != ' ' else '' for i in keywords)
+    keywords_list = re.findall(pattern='[\u4e00-\u9fa5(（）)]+', string=keywords)
 
     predict_label = ''.join([str(i) if i !=' ' else '' for i in list(predict_label)])
     predict_list = re.findall(pattern='[2-9]+', string=predict_label)
@@ -338,21 +331,9 @@ def get_slot(content, predict_label):
 
     return key_words
 
+# predict(content='你知道铸造行业树脂砂铸造类型中的焊接对于环境有那些危害')
 # test_data = data_process.test_flow_dataset()
-# train = test_data[:4800]
-# test = test_data[4800:]
-# start(dataset=train, use_crf=True, input_dim=vocab_size, output_dim=num_class, fit=True)
-# content = '农药制造行业中关生物发酵（或者化学合成）有什么坏的影响'
-# label = ['B-PST', 'B-PST', 'B-PST', 'B-PST', 'B-PST', 'B-PST', 'B-PST', 'O', 'O', 'B-PS', 'B-PS', 'O', 'O', 'O', 'O', 'O', 'O', 'O', 'O']
-# 我想知道装备制造中关于喷塑对环境的影响有哪些
-# 不定型耐火材料中的存贮有哪些不好的影响
-# 农药制造行业中关生物发酵（或者化学合成）有什么坏的影响
+# train = test_data[:11200]
+# test = test_data[11200:]
+# fit_dataset(dataset=train, use_crf=True, input_dim=vocab_size, output_dim=num_class, fit=True)
 
-# kwo, pre = predict(content, crf=True)
-# d = get_slot(kwo, pre)
-#
-# from SlotProcess import slot_process
-# end = slot_process.slot_match(d)
-# print(f"测试问句: {content}")
-# print(f"获取到的槽数据: {d}")
-# print(f"获取到的答案: {end}")
