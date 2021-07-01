@@ -32,8 +32,9 @@ time_month = datetime.now().month
 time_day = datetime.now().day
 
 log_dir = f'../ModelCkpt/model_save/logs/'
-bert_crf_ckpt = f'../ModelCkpt/model_save/bert_crf_checkpoint'
-bert_ckpt = f'../ModelCkpt/model_save/{time_month}-{time_day}/bert_checkpoint'
+# bert_crf_ckpt = f'../ModelCkpt/bert_crf_save2pb/pb_model_{time_month}_{time_day}/'
+bert_ckpt = f'../ModelCkpt/bert_save2pb/pb_model_{time_month}_{time_day}/'
+bert_crf_ckpt = '../ModelCkpt/bert_crf_save2pb/tfs/1/'
 
 dirs = [log_dir, bert_crf_ckpt, bert_ckpt]
 for file in dirs:
@@ -52,7 +53,7 @@ def labels4seq(data, id2seq=False):
             'O': 1, 'B-IND': 2, 'B-QT': 3, 'B-PST': 4, 'B-PS': 5}
     else:
         label_seq = {
-            '1': 'O', '2': 'B-IND', '3': 'B-QT', '4': 'B-PST', '5': 'B-PS', '0': ''}
+            '1': 'O', '2': 'B-IND', '3': 'B-QT', '4': 'B-PST', '5': 'B-PS', '0': '0'}
 
     label = [label_seq[i] for i in data]
 
@@ -112,22 +113,22 @@ class MyBertCrf(tf.keras.Model):
         self.dense = tf.keras.layers.Dense(self.output_dim)
         self.other_params = tf.Variable(tf.random.uniform(shape=(output_dim, output_dim)))
 
-    @tf.function(input_signature=[tf.TensorSpec([None, 128], name='ids', dtype=tf.int32),
+    @tf.function(input_signature=[(tf.TensorSpec([None, 128], name='ids', dtype=tf.int32),
                                   tf.TensorSpec([None, 128], name='mask', dtype=tf.int32),
                                   tf.TensorSpec([None, 128], name='tokens', dtype=tf.int32),
-                                  tf.TensorSpec([None, 128], name='target', dtype=tf.int32),
-                                  tf.TensorSpec([1], name='input_seq_len', dtype=tf.int32)])
-    def call(self, ids, masks, tokens, target, input_seq_len):
+                                  tf.TensorSpec([None, 128], name='target', dtype=tf.int32))])
+    def call(self, batch_data):
+        ids, masks, tokens, target = batch_data
+        input_seq_len = tf.cast(tf.reduce_sum(masks, axis=1), dtype=tf.int32)
+
         hidden = self.bert(ids, masks, tokens)[0]
         dropout_inputs = self.dropout(hidden, 1)
         logistic_seq = self.dense(dropout_inputs)
-        print(hidden)
-        print(ids, masks, tokens, target, input_seq_len)
         if self.use_crf:
             log_likelihood, self.other_params = tfa.text.crf.crf_log_likelihood(logistic_seq,
                                                                                 target,
                                                                                 input_seq_len,
-                                                                                self.other_params )
+                                                                                self.other_params)
             decode_predict, crf_scores = tfa.text.crf_decode(logistic_seq, self.other_params , input_seq_len)
 
             return decode_predict, log_likelihood, crf_scores
@@ -174,16 +175,10 @@ def fit_dataset(dataset, use_crf, input_dim, output_dim, fit=True):
     opti_bert = tf.keras.optimizers.Adam(learning_rate=1e-5, beta_1=0.9, beta_2=0.95)
     opti_other = tf.keras.optimizers.Adam(learning_rate=1e-3, beta_1=0.9, beta_2=0.95)
 
-    checkpoint = tf.train.Checkpoint(model=bert_crf)
-
     if use_crf:
         model_ckpt = bert_crf_ckpt
     else:
         model_ckpt = bert_ckpt
-
-    checkpoint_manager = tf.train.CheckpointManager(checkpoint,
-                                                    directory=model_ckpt,
-                                                    max_to_keep=3)
 
     def fit_models(batch_data):
         params_bert = []
@@ -194,15 +189,8 @@ def fit_dataset(dataset, use_crf, input_dim, output_dim, fit=True):
         tokens = batch_data['tokens']
         target = batch_data['labels']
 
-        input_seq_len = tf.reduce_sum(masks, axis=1)
-
         with tf.GradientTape() as tp:
-            ids = tf.cast(ids, dtype=tf.int32)
-            masks = tf.cast(masks, dtype=tf.int32)
-            tokens = tf.cast(tokens, dtype=tf.int32)
-            target = tf.cast(target, dtype=tf.int32)
-            input_seq_len = tf.cast(input_seq_len, dtype=tf.int32)
-            predict_seq, log_likelihood, crf_scores = bert_crf(ids, masks, tokens, target, input_seq_len)
+            predict_seq, log_likelihood, crf_scores = bert_crf((ids, masks, tokens, target))
             if use_crf:
                 loss_value = get_loss(log_likelihood)
             else:
@@ -246,21 +234,19 @@ def fit_dataset(dataset, use_crf, input_dim, output_dim, fit=True):
                     log = f"date: {time_month}-{time_day}, step: {_}, loss{loss}, f1_score: {f1_value} \n"
                     f.write(log)
 
-        checkpoint_manager.save()
+        bert_crf.save(filepath=model_ckpt)
 
     else:
         # valid
         valid_pre_label = pd.DataFrame()
-        checkpoint.restore(tf.train.latest_checkpoint(model_ckpt))
+        bert_crf = tf.saved_model.load(model_ckpt)
 
         for num, inputs in enumerate(dataset):
             valid_id = inputs['ids']
             valid_mask = inputs['masks']
             valid_token = inputs['tokens']
             valid_target = inputs['labels']
-            valid_seq_len = tf.reduce_sum(valid_mask, axis=1)
-
-            valid_pred, _, _ = bert_crf(valid_id, valid_mask, valid_token, valid_target, valid_seq_len)
+            valid_pred, _, _ = bert_crf((valid_id, valid_mask, valid_token, valid_target))
 
             f1_value = get_f1_score(labels=valid_target, predicts=valid_pred, use_crf=use_crf)
 
@@ -273,9 +259,8 @@ def fit_dataset(dataset, use_crf, input_dim, output_dim, fit=True):
         return valid_pre_label
 
 
-def predict(content, crf=True):
-    """
-    用于处理对话中的单条语句
+def get_predict_data(content):
+    """将输入的问句初步token处理
     """
     inputs = tokenizer.encode_plus(content,
                                    add_special_tokens=True,
@@ -289,40 +274,47 @@ def predict(content, crf=True):
 
     label_length = len(content)
     label = tf.constant([max_len * [0]], dtype=tf.int32)
-    input_seq_len = tf.constant(tf.reduce_sum(input_mask, axis=1), dtype=tf.int32)
+    input_data = (input_id, input_mask, token_type_ids, label)
 
-    bert_crf = MyBertCrf(use_crf=crf, input_dim=vocab_size, output_dim=num_class)
-    print(bert_crf)
-    checkpoint = tf.train.Checkpoint(model=bert_crf)
+    return input_data, label_length
 
+
+def predict_data(input_id, input_mask, token_type_ids, label, crf=True):
+    """预测处理后的输入问句
+    """
     if crf:
         model_ckpt = bert_crf_ckpt
     else:
         model_ckpt = bert_ckpt
 
-    checkpoint.restore(tf.train.latest_checkpoint(model_ckpt))
-    predict_label, _, _ = bert_crf.call(input_id, input_mask, token_type_ids, label, input_seq_len)
+    bert_crf = tf.saved_model.load(model_ckpt)
+    predict_label, _, _ = bert_crf.call((input_id, input_mask, token_type_ids, label))
 
     if not crf:
         predict_label = tf.argmax(predict_label, axis=-1)
 
-    # 只提取keywords的编码
+    return predict_label
+
+
+def get_keywords_label(predict_label, label_length, input_id):
+    """获取模型预测的结果
+    keywords: 指序列标注保留的关键数据
+    label: 用于配合keywords在get_slot()中将关键数据填入到对应的插槽中
+    """
     predict_label = np.array(predict_label)[0][:label_length]
     predict_label_mask = [0 if p <= 1 else 1 for p in predict_label]
-
     # 根据keywords的编码获取input_id内部的关键词id
     input_id_mask = np.array(input_id)[0][1: label_length + 1]
+
     keywords_id = predict_label_mask * input_id_mask
     keywords = tokenizer.decode(keywords_id)
 
     # 将会根据关键词内部的id和预测值的关键词编码获取到对应槽的值
-
     return keywords, predict_label
 
 
 def get_slot(keywords, predict_label):
-    """
-    考虑到数据特点关键词是以词组的形式出现, 为了准确的找到关键词对应的代码(a,b,c,d)
+    """考虑到数据特点关键词是以词组的形式出现, 为了准确的找到关键词对应的代码(a,b,c,d)
     因此使用zip数组将keywords和predict连接在一起
     设置一个字典, 代码(a,b,c,d)作为key, 值为一个列表, 因此一个代码可以添加多个对应关键词
     """
@@ -342,8 +334,46 @@ def get_slot(keywords, predict_label):
 
     return key_words
 
-# predict(content='你知道铸造行业树脂砂铸造类型中的焊接对于环境有那些危害')
-test_data = data_process.test_flow_dataset()
-train = test_data[:1600]
-test = test_data[1600:]
-fit_dataset(dataset=train, use_crf=True, input_dim=vocab_size, output_dim=num_class, fit=True)
+
+def predict(content, crf=True):
+    """1: 将输入的问句进行初步token处理---get_predict_data(）
+    2: 模型预测获取序列标注结果---predict_data()
+    3: 将序列标注结果进行处理获取关键词和关键词对应槽值---get_keywords_label()
+    4: 将关键词插入到对应的槽里面---get_slot()
+    """
+    input_data, label_length =  get_predict_data(content)
+    input_id, input_mask, token_type_ids, label = input_data
+    predict_label = predict_data(input_id, input_mask, token_type_ids, label, crf=crf)
+
+    keywords, predict_label = get_keywords_label(predict_label=predict_label,
+                                                 label_length=label_length,
+                                                 input_id=input_id)
+
+    keywords = get_slot(keywords, predict_label)
+
+    return keywords
+
+
+def fit():
+    # todo 待改进
+    test_data = data_process.test_flow_dataset()
+    train = test_data[:11200]
+    test = test_data[11200:]
+    fit_dataset(dataset=train, use_crf=True, input_dim=vocab_size, output_dim=num_class, fit=True)
+
+
+def valid():
+    # todo 待改进
+    test_data = data_process.test_flow_dataset()
+    train = test_data[:11200]
+    test = test_data[11200:]
+    fit_dataset(dataset=test, use_crf=True, input_dim=vocab_size, output_dim=num_class, fit=False)
+
+print(predict(content='你知道铸造行业树脂砂铸造类型中的焊接对于环境有那些危害'))
+
+
+
+
+
+
+

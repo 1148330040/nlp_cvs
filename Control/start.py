@@ -9,11 +9,12 @@
 import json
 import redis
 
-from Models.bert_crf import predict, get_slot
+from Models.bert_crf import predict
 from SlotProcess.slot_process import slot_match, slot2add, slot2tips
 
 slot_tem_address = redis.Redis(host=str('127.0.0.1'), port=int(6379))
 slot_tem_address.set(name='slot', value=json.dumps({}))
+
 
 def keywords_process(keywords):
     """
@@ -33,6 +34,7 @@ def keywords_process(keywords):
                                      process, process_type,
                                      answers=answers,
                                      slot=slot)
+
         slot_tem_address.set(name='slot', value=json.dumps({}))
 
     else:
@@ -55,9 +57,7 @@ def keywords_process(keywords):
 
 def deploy():
     content = input("请输入你想了解的信息: ")
-    keywords, label = predict(content, crf=True)
-    keywords = get_slot(keywords=keywords, predict_label=label)
-
+    keywords = predict(content)
     _, information = keywords_process(keywords=keywords)
     if _ == 'tip':
         print(f"不好意思信息缺失关键词, 请按照提示输入下列关键词: \n{information}")
@@ -71,13 +71,7 @@ def deploy():
 # content = '铸造行业中关于焊接有什么坏的影响'
 # content = '树脂砂铸造类型是什么'
 # deploy()
-#
-# sudo nvidia-docker run -p 8500:8500 -v /mnt/tang_cvs/ModelCkpt/model_save/bert_crf_checkpoint/:/models/test_tfs --name test_tfs 50588334dfbf --port=8500 --per_process_gpu_memory_fraction=0.99 --enable_batching=true --model_name=test_tfs --model_base_path=/models/test_tfs bash &
-# nvidia-docker run -p 8500:8500 -v /mnt/tang_cvs/ModelCkpt/model_save/bert_crf_checkpoint/:/models/test_tfs 50588334dfbf --model_name=test_tfs --model_base_path=/models/test_tfs bash &
-#
-# docker run -it -p 8501:8501 \
-#   --mount type=bind,source=/mnt/tang_cvs/ModelCkpt/model_save/bert_crf_checkpoint/,target=/models/bert_crf_checkpoint \
-#   -e MODEL_NAME=bert_crf_checkpoint -t 50588334dfbf bash
-#
-# tensorflow_model_server --port=8500 --rest_api_port=8501 \
-#   --model_name=bert_crf_checkpoint --model_base_path=/models/bert_crf_checkpoint
+
+
+
+

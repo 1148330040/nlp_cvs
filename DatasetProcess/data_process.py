@@ -110,7 +110,6 @@ def fill_template(d5, d45, t5, t45):
     :param t45: template数据 仅针对于have_c 数据
     :return: fill template Dataset
     """
-
     def fill_t5(ds5, template_5):
         # have c
         content = []
@@ -157,7 +156,6 @@ def fill_template(d5, d45, t5, t45):
         data_5 = pd.concat([content, label], axis=1)
 
         return data_5
-
 
     def fill_t45(ds45, template_45):
         # no c
@@ -302,7 +300,7 @@ def test_flow_dataset():
         l_dtl = str(dtl)
         c_dtl = str(dtl)
         if 'c' not in dtl:
-            for i in range(200):
+            for i in range(2000):
                 d4_ = d4.sample(n=1)
                 industry = d4_['industry'].values[0]
                 process = d4_['process'].values[0]
@@ -310,7 +308,7 @@ def test_flow_dataset():
                 labels.append(l_dtl.replace('a', str(len(industry) * 'A'))
                               .replace('d', str(len(process) * 'D')))
         else:
-            for i in range(200):
+            for i in range(2000):
                 d5_ = d5.sample(n=1)
                 industry = d5_['industry'].values[0]
                 process_type = d5_['process_type'].values[0]
