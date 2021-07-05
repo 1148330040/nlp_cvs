@@ -47,6 +47,8 @@ def get_sql_cvs_dataset():
 
 
 def get_sql_QA_dataset(dataset_name):
+    """用于获取构建好的问句数据
+    """
     params = link_db()
     db = pymysql.connect(**params)
     columns = ['industry', 'question_type', 'process', 'answer', 'process_type']
@@ -64,3 +66,24 @@ def get_sql_QA_dataset(dataset_name):
                 f"Please check the database : mysql.tang_cvs.{dataset_name}, "
                 f"database name need to ds4 or ds5 or ds55"
             )
+
+
+def get_sql_check_slot_dataset(slot):
+    """该函数用于check_slot()用作检查slot数据是否出错
+    来确定是否直接返回keywords还是进行下一步的相似度检查
+    """
+    params = link_db()
+    db = pymysql.connect(**params)
+
+    with db.cursor() as cursor:
+        sql = f"SELECT distinct {slot} FROM tang_cvs.ds55;"
+        try:
+            cursor.execute(sql)
+            result = cursor.fetchall()
+            dataset = pd.DataFrame(result, columns=[slot])
+            return dataset[slot].values
+        except:
+            raise ValueError(
+                f"Please check the database : mysql.tang_cvs.ds55.{slot},"
+            )
+

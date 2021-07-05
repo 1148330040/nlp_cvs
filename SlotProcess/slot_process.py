@@ -9,6 +9,8 @@
 import pandas as pd
 
 from SqlLink import sql_interactive
+from Models.similarity_process import get_Top1similarity_word
+
 pd.set_option('display.max_columns', None)
 
 
@@ -155,4 +157,28 @@ def slot2add(industry, question_type, process, process_type, answers, slot):
 
     return answers, df, slot
 
+
+def check_slot(keywords):
+    """该函数的目的用于检查获取的槽数据是否正确
+    如果正确则返回槽数据如果不正确则需要对槽数据里错误的槽进行相似度匹配
+    example：
+    传递过来的关键词: {'industry': ['铸造'], 'question_type': [], 'process_type': [], 'process': ['焊接']}
+    则该函数会检查'铸造'是否在槽‘industry’内部,‘焊接’是否在槽‘process‘内部如果均在则返回正确否则
+    返回错误，会进行下一步的关键相似度匹配计算找到最合适的关键词替换到对应的槽内部
+    """
+    print(f"包含错误关键词的槽数据: {keywords}")
+    new_keywords = {}
+    for key, values in keywords.items():
+        new_keywords[key] = []
+        if len(values) >= 1:
+            check_key4values = sql_interactive.get_sql_check_slot_dataset(slot=key)
+            # 从数据库里面获取到对应槽的去重值--返回一个列表
+            for v in values:
+                if v in check_key4values:
+                    pass
+                else:
+                    v = get_Top1similarity_word(word=v, similarity_words=check_key4values)
+                new_keywords[key].append(v)
+    print(f"最终获取的正确关键词: {new_keywords}")
+    return new_keywords
 

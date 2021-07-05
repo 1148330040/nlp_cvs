@@ -41,8 +41,6 @@ for file in dirs:
     if not os.path.exists(file):
         os.makedirs(file)
 
-
-# todo 适配对话数据的编码
 num_class = len(['O', 'B-IND', 'B-QT', 'B-PST', 'B-PS']) + 1
 
 
@@ -279,6 +277,9 @@ def get_predict_data(content):
     return input_data, label_length
 
 
+# 如果使用Sanic部署则保证这一行代码为全局获取
+model = tf.saved_model.load(bert_crf_ckpt)
+
 def predict_data(input_id, input_mask, token_type_ids, label, crf=True):
     """预测处理后的输入问句
     """
@@ -287,8 +288,8 @@ def predict_data(input_id, input_mask, token_type_ids, label, crf=True):
     else:
         model_ckpt = bert_ckpt
 
-    bert_crf = tf.saved_model.load(model_ckpt)
-    predict_label, _, _ = bert_crf.call((input_id, input_mask, token_type_ids, label))
+    # bert_crf = tf.saved_model.load(model_ckpt)
+    predict_label, _, _ = model.call((input_id, input_mask, token_type_ids, label))
 
     if not crf:
         predict_label = tf.argmax(predict_label, axis=-1)
@@ -324,6 +325,8 @@ def get_slot(keywords, predict_label):
     predict_label = ''.join([str(i) if i !=' ' else '' for i in list(predict_label)])
     predict_list = re.findall(pattern='[2-9]+', string=predict_label)
 
+    # todo 相似度处理，如果获取到的关键词无法在原数据内部匹配到的话
+
     seq_key = {
         '2': 'industry', '3': 'question_type', '4': 'process_type', '5': 'process'}
     key_words = {
@@ -344,12 +347,13 @@ def predict(content, crf=True):
     input_data, label_length =  get_predict_data(content)
     input_id, input_mask, token_type_ids, label = input_data
     predict_label = predict_data(input_id, input_mask, token_type_ids, label, crf=crf)
-
     keywords, predict_label = get_keywords_label(predict_label=predict_label,
                                                  label_length=label_length,
                                                  input_id=input_id)
 
     keywords = get_slot(keywords, predict_label)
+    from SlotProcess.slot_process import check_slot
+    keywords = check_slot(keywords)
 
     return keywords
 
@@ -368,12 +372,5 @@ def valid():
     train = test_data[:11200]
     test = test_data[11200:]
     fit_dataset(dataset=test, use_crf=True, input_dim=vocab_size, output_dim=num_class, fit=False)
-
-print(predict(content='你知道铸造行业树脂砂铸造类型中的焊接对于环境有那些危害'))
-
-
-
-
-
 
 

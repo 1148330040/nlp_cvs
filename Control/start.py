@@ -9,11 +9,18 @@
 import json
 import redis
 
+from sanic import Sanic
+from sanic.response import HTTPResponse
+
+from datetime import datetime
+
 from Models.bert_crf import predict
 from SlotProcess.slot_process import slot_match, slot2add, slot2tips
 
 slot_tem_address = redis.Redis(host=str('127.0.0.1'), port=int(6379))
 slot_tem_address.set(name='slot', value=json.dumps({}))
+
+app = Sanic(__name__)
 
 
 def keywords_process(keywords):
@@ -55,23 +62,31 @@ def keywords_process(keywords):
         return 'ans', answers
 
 
-def deploy():
-    content = input("请输入你想了解的信息: ")
+@app.route('/start/<content:string>')
+async def deploy(request, content):
+    content = content
+    print(content)
+    stime = datetime.now()
     keywords = predict(content)
+
     _, information = keywords_process(keywords=keywords)
     if _ == 'tip':
         print(f"不好意思信息缺失关键词, 请按照提示输入下列关键词: \n{information}")
     if _ == 'ans':
-        print(f"找到你需要的答案了, 内容如下: \n{information[0]}")
-    return deploy()
+        information = information[0]
+        print(f"找到你需要的答案了, 内容如下: \n{information}")
+    print(f"cost time: {datetime.now() - stime}")
+    return HTTPResponse(json.dumps(information))
+    # return deploy()
     # todo 提供一个接口用以直接获取提示信息 或者重新进行一个问句的输入然后获取相关信息
 
 
+if __name__ == '__main__':
+    app.run(host="0.0.0.0")
+
 # content='你知道铸造行业树脂砂铸造类型中的焊接对于环境有那些危害'
-# content = '铸造行业中关于焊接有什么坏的影响'
+# content = '铸造行业中的焊接有什么坏的影响'
 # content = '树脂砂铸造类型是什么'
 # deploy()
 
-
-
-
+# 你知道铸监管科造行业树脂铸造傻类型中的焊啥接对于环境有那些危害
