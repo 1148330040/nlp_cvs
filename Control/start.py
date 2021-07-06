@@ -10,9 +10,8 @@ import json
 import redis
 
 from sanic import Sanic
-from sanic.response import HTTPResponse
-
 from datetime import datetime
+from sanic.response import HTTPResponse
 
 from Models.bert_crf import predict
 from SlotProcess.slot_process import slot_match, slot2add, slot2tips

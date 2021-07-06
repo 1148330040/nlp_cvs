@@ -10,22 +10,24 @@ import re
 import os
 
 import numpy as np
-import pandas as pd
 import tensorflow as tf
 import tensorflow_addons as tfa
 
 from datetime import datetime
 from sklearn.metrics import f1_score
 from transformers import BertTokenizer, TFBertModel
+
 from DatasetProcess import data_process
+from SlotProcess.slot_process import check_slot
 
 epochs = 4
 max_len = 128
 batch_size = 16
-hidden_dim = 200
+num_class = len(['O', 'B-IND', 'B-QT', 'B-PST', 'B-PS']) + 1
 
 tokenizer = BertTokenizer.from_pretrained("hfl/chinese-bert-wwm-ext")
 
+# 词向量长度
 vocab_size = len(tokenizer.get_vocab())
 
 time_month = datetime.now().month
@@ -40,8 +42,6 @@ dirs = [log_dir, bert_crf_ckpt, bert_ckpt]
 for file in dirs:
     if not os.path.exists(file):
         os.makedirs(file)
-
-num_class = len(['O', 'B-IND', 'B-QT', 'B-PST', 'B-PS']) + 1
 
 
 def labels4seq(data, id2seq=False):
@@ -59,6 +59,8 @@ def labels4seq(data, id2seq=False):
 
 
 def dataset_generator(data):
+    """迭代的形式构建batch_dataset
+    """
     ids, masks, tokens, labels, labels_length = [], [], [], [], []
 
     data = data.sample(frac=1.0)
@@ -99,6 +101,30 @@ def dataset_generator(data):
 
 
 class MyBertCrf(tf.keras.Model):
+    """bert+crf模型
+
+    通过tf.TensorSpec控制输入张量的形状和类型以达到保存为.pb形式的文件
+    相较于保存权重值, pb形式的文件读取更方便不需要重新构建一个空的模型
+    在填充其权重值
+
+    Models:
+    bert: 使用transformers的hfl模型
+    https://github.com/ymcui/Chinese-BERT-wwm / https://huggingface.co/hfl
+    如果未安装则会自动下载
+    crf: 使用tensorflow_addons
+
+    Variables:
+    user_crf: 是否使用crf层, 使用crf将导致模型训练时长变得更长
+    input_dim: 由编码器的词向量表长度获取
+    output_dim: 由序列标注的类型数目获取, 确保在原有的基础上+1(原因是掩码的标注)
+    batch_data: 包含input_ids, input_mask, token_type_ids, target
+
+    other:
+    关于使用@tf.function和tf_serving相关:
+    https://huggingface.co/blog/tf-serving
+
+    """
+
     def __init__(self, use_crf, input_dim, output_dim):
         super(MyBertCrf, self).__init__(use_crf, input_dim, output_dim)
         self.use_crf = use_crf
@@ -111,10 +137,11 @@ class MyBertCrf(tf.keras.Model):
         self.dense = tf.keras.layers.Dense(self.output_dim)
         self.other_params = tf.Variable(tf.random.uniform(shape=(output_dim, output_dim)))
 
-    @tf.function(input_signature=[(tf.TensorSpec([None, 128], name='ids', dtype=tf.int32),
-                                  tf.TensorSpec([None, 128], name='mask', dtype=tf.int32),
-                                  tf.TensorSpec([None, 128], name='tokens', dtype=tf.int32),
-                                  tf.TensorSpec([None, 128], name='target', dtype=tf.int32))])
+
+    @tf.function(input_signature=[(tf.TensorSpec([None, max_len], name='ids', dtype=tf.int32),
+                                  tf.TensorSpec([None, max_len], name='mask', dtype=tf.int32),
+                                  tf.TensorSpec([None, max_len], name='tokens', dtype=tf.int32),
+                                  tf.TensorSpec([None, max_len], name='target', dtype=tf.int32))])
     def call(self, batch_data):
         ids, masks, tokens, target = batch_data
         input_seq_len = tf.cast(tf.reduce_sum(masks, axis=1), dtype=tf.int32)
@@ -164,7 +191,13 @@ def get_f1_score(labels, predicts, use_crf):
     return f1_value
 
 
-def fit_dataset(dataset, use_crf, input_dim, output_dim, fit=True):
+def fit_steps(dataset, use_crf, input_dim, output_dim):
+    """通过tf.GradientTape控制训练
+    dataset: 数据
+    use_crf: 是否使用crf层控制, 使用crf将导致训练时间大幅增长
+    input_dim: 词库长度token.vocab_size
+    output_dim: 序列标注长度
+    """
     # bert层的学习率与其他层的学习率要区分开来
     dataset = dataset_generator(dataset)
 
@@ -216,45 +249,22 @@ def fit_dataset(dataset, use_crf, input_dim, output_dim, fit=True):
 
         return loss_value, predict_seq, target
 
-    if fit:
-        # fit
-        for _, data in enumerate(dataset):
-            loss, predicts, labels = fit_models(batch_data=data)
 
-            if _ % 5 == 0:
-                print(f"step: {_}, loss_value: {loss}")
+    for _, data in enumerate(dataset):
+        loss, predicts, labels = fit_models(batch_data=data)
 
-            if _ % 20 == 0:
-                f1_value = get_f1_score(labels=labels, predicts=predicts, use_crf=use_crf)
-                with open(log_dir + 'fit_logs.txt', 'a') as f:
-                    # 'a'  要求写入字符
-                    # 'wb' 要求写入字节(str.encode(str))
-                    log = f"date: {time_month}-{time_day}, step: {_}, loss{loss}, f1_score: {f1_value} \n"
-                    f.write(log)
+        f1_value = get_f1_score(labels=labels, predicts=predicts, use_crf=use_crf)
+        if _ % 5 == 0:
+            print(f"step: {_}, loss_value: {loss}, f1_score: {f1_value}")
 
-        bert_crf.save(filepath=model_ckpt)
-
-    else:
-        # valid
-        valid_pre_label = pd.DataFrame()
-        bert_crf = tf.saved_model.load(model_ckpt)
-
-        for num, inputs in enumerate(dataset):
-            valid_id = inputs['ids']
-            valid_mask = inputs['masks']
-            valid_token = inputs['tokens']
-            valid_target = inputs['labels']
-            valid_pred, _, _ = bert_crf((valid_id, valid_mask, valid_token, valid_target))
-
-            f1_value = get_f1_score(labels=valid_target, predicts=valid_pred, use_crf=use_crf)
-
-            with open(log_dir + 'valid_logs.txt', 'a') as f:
+        if _ % 20 == 0:
+            with open(log_dir + 'fit_logs.txt', 'a') as f:
                 # 'a'  要求写入字符
                 # 'wb' 要求写入字节(str.encode(str))
-                log = f"date: {time_month}-{time_day}, batch: {num}, f1_score: {f1_value} \n"
+                log = f"date: {time_month}-{time_day}, step: {_}, loss{loss}, f1_score: {f1_value} \n"
                 f.write(log)
 
-        return valid_pre_label
+    bert_crf.save(filepath=model_ckpt)
 
 
 def get_predict_data(content):
@@ -277,18 +287,18 @@ def get_predict_data(content):
     return input_data, label_length
 
 
-# 如果使用Sanic部署则保证这一行代码为全局获取
+# 如果使用sanic部署则保证这一行代码为全局获取
 model = tf.saved_model.load(bert_crf_ckpt)
 
 def predict_data(input_id, input_mask, token_type_ids, label, crf=True):
     """预测处理后的输入问句
     """
-    if crf:
-        model_ckpt = bert_crf_ckpt
-    else:
-        model_ckpt = bert_ckpt
-
+    # if crf:
+    #     model_ckpt = bert_crf_ckpt
+    # else:
+    #     model_ckpt = bert_ckpt
     # bert_crf = tf.saved_model.load(model_ckpt)
+
     predict_label, _, _ = model.call((input_id, input_mask, token_type_ids, label))
 
     if not crf:
@@ -325,8 +335,6 @@ def get_slot(keywords, predict_label):
     predict_label = ''.join([str(i) if i !=' ' else '' for i in list(predict_label)])
     predict_list = re.findall(pattern='[2-9]+', string=predict_label)
 
-    # todo 相似度处理，如果获取到的关键词无法在原数据内部匹配到的话
-
     seq_key = {
         '2': 'industry', '3': 'question_type', '4': 'process_type', '5': 'process'}
     key_words = {
@@ -352,25 +360,45 @@ def predict(content, crf=True):
                                                  input_id=input_id)
 
     keywords = get_slot(keywords, predict_label)
-    from SlotProcess.slot_process import check_slot
     keywords = check_slot(keywords)
 
     return keywords
 
 
-def fit():
-    # todo 待改进
-    test_data = data_process.test_flow_dataset()
-    train = test_data[:11200]
-    test = test_data[11200:]
-    fit_dataset(dataset=train, use_crf=True, input_dim=vocab_size, output_dim=num_class, fit=True)
+def fit(dataset, crf=True):
+    """训练开关
+    """
+    data_process.test_flow_dataset()
+    # dataset = test_data[:11200]
+    fit_steps(dataset=dataset, use_crf=crf, input_dim=vocab_size, output_dim=num_class)
 
 
-def valid():
-    # todo 待改进
-    test_data = data_process.test_flow_dataset()
-    train = test_data[:11200]
-    test = test_data[11200:]
-    fit_dataset(dataset=test, use_crf=True, input_dim=vocab_size, output_dim=num_class, fit=False)
+def valid(dataset, crf=True):
+    """验证开关
+    """
+    # test_data = data_process.test_flow_dataset()
+    # dataset = test_data[11200:]
+    valid_values = []
+    dataset = dataset_generator(dataset)
 
+    for num, inputs in enumerate(dataset):
+        valid_id = inputs['ids']
+        valid_mask = inputs['masks']
+        valid_token = inputs['tokens']
+        valid_target = inputs['labels']
+        valid_pred, _, _ = model((valid_id, valid_mask, valid_token, valid_target))
 
+        f1_value = get_f1_score(labels=valid_target, predicts=valid_pred, use_crf=crf)
+
+        with open(log_dir + 'valid_logs.txt', 'a') as f:
+            # 'a'  要求写入字符
+            # 'wb' 要求写入字节(str.encode(str))
+            log = f"date: {time_month}-{time_day}, batch: {num}, f1_score: {f1_value} \n"
+            f.write(log)
+
+        if num % 5 == 0:
+            print(f"batch: {num}, f1_score: {f1_value} \n")
+
+        valid_values.append(f1_value)
+
+    return np.array(valid_values).mean()

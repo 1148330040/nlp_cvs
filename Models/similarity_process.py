@@ -5,14 +5,15 @@
 # author: @唐志林
 # function: 相似度功能添加
 # =================================
+
 import os
 import numpy as np
 import pandas as pd
 
 from bert4keras.backend import keras
-from bert4keras.models import build_transformer_model
 from bert4keras.tokenizers import Tokenizer
 from bert4keras.snippets import sequence_padding
+from bert4keras.models import build_transformer_model
 
 
 pd.set_option('display.max_columns', None)
@@ -35,9 +36,10 @@ bert = build_transformer_model(
 
 bert = keras.models.Model(bert.model.inputs, bert.model.outputs[0])
 
+
 def get_Top1similarity_word(word, similarity_words):
-    """word: 字符串
-    similarity_words: 列表
+    """word: 错误槽数据
+    similarity_words: 待匹配槽数据列表
     """
     word = word
     similarity_words = list(similarity_words)
