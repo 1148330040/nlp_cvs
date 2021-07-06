@@ -76,9 +76,6 @@ async def deploy(request, content):
         print(f"找到你需要的答案了, 内容如下: \n{information}")
     print(f"cost time: {datetime.now() - stime}")
     return HTTPResponse(json.dumps(information))
-    # return deploy()
-    # todo 提供一个接口用以直接获取提示信息 或者重新进行一个问句的输入然后获取相关信息
-
 
 if __name__ == '__main__':
     app.run(host="0.0.0.0")
