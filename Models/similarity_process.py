@@ -46,8 +46,6 @@ def get_Top1similarity_word(word, similarity_words):
     for w in similarity_words:
         if type(w) != str:
             similarity_words.remove(w)
-    print(f"错误关键词: {word}")
-    print(f"对比相似度的候选关键词: {similarity_words}")
 
     token_ids_a = sequence_padding([tokenizer.encode(v, maxlen=50)[0] for v in similarity_words])
 

@@ -14,7 +14,7 @@ from Models.similarity_process import get_Top1similarity_word
 pd.set_option('display.max_columns', None)
 
 
-def slot_match(industry, question_type, process, process_type, answers, slot):
+def slot2match(industry, question_type, process, process_type, answers, slot):
     """使用该方法进行槽数据的匹配, 然后索引到对应的答案
     """
     answer_dataset = sql_interactive.get_sql_QA_dataset(dataset_name='ds55')
@@ -35,7 +35,7 @@ def slot_match(industry, question_type, process, process_type, answers, slot):
 
     def pop_keywords4str(data):
         # 当得到了一个字符串式的answer调用该方法
-        # 用以将对应的ind和pt以及p列表内的已经使用的索引关键词清楚
+        # 用以将对应的ind和pt以及p列表内的已经使用的索引关键词清除
         ind_ = data['industry'].values[0]
         p_ = data['process'].values[0]
         pt_ = data['process_type'].values[0]
@@ -53,7 +53,6 @@ def slot_match(industry, question_type, process, process_type, answers, slot):
         ind4data = data['industry'].values
         p4data = data['process'].values
         pt4data = data['process_type'].values
-
 
         for ind4, p4, pt4 in zip(ind4data, p4data, pt4data):
             if ind4 in industry:
@@ -74,7 +73,7 @@ def slot_match(industry, question_type, process, process_type, answers, slot):
             ind = answer_dataset_p['industry'].values[0]
             pop_keywords4str(answer_dataset_p)
             answers.append(f"{ind}-{p}: {answer}")
-            return slot_match(industry, question_type, process, process_type, answers, slot)
+            return slot2match(industry, question_type, process, process_type, answers, slot)
         else:
             answer_dataset = answer_dataset_p
 
@@ -89,7 +88,7 @@ def slot_match(industry, question_type, process, process_type, answers, slot):
                     p = answer_dataset_pt['process'].values[0]
                     pop_keywords4str(answer_dataset_pt)
                     answers.append(f"{ind}-{pt}-{p}: {answer}")
-                    return slot_match(industry, question_type, process, process_type, answers, slot)
+                    return slot2match(industry, question_type, process, process_type, answers, slot)
                 else:
                     answer_dataset = answer_dataset_pt
 
@@ -103,7 +102,7 @@ def slot_match(industry, question_type, process, process_type, answers, slot):
                     p = answer_dataset_ind['process'].values[0]
                     pop_keywords4str(answer_dataset_ind)
                     answers.append(f"{ind}-{p}: {answer}")
-                    return slot_match(industry, question_type, process, process_type, answers, slot)
+                    return slot2match(industry, question_type, process, process_type, answers, slot)
                 else:
                     answer_dataset = answer_dataset_ind
 
@@ -112,7 +111,7 @@ def slot_match(industry, question_type, process, process_type, answers, slot):
     answers.append(answer)
 
     if max(cou_ind, cou_qt, cou_p, cou_pt) > 0:
-        return slot_match(industry, question_type, process, process_type, answers, slot)
+        return slot2match(industry, question_type, process, process_type, answers, slot)
 
 
 def slot2tips(df, slot):
@@ -129,22 +128,22 @@ def slot2tips(df, slot):
     return tip_inf
 
 
-def slot2add(industry, question_type, process, process_type, answers, slot):
+def slot2add(new_slot, old_slot, answers):
     """将现阶段获取的槽数据与上个阶段遗留的槽数据结合到一起, 重新进行槽数据的匹配进行答案的查找
+    slot: 上阶段遗留的槽
+    industry/question_type/process/process_type: 现阶段的新槽数据
     """
-    for ind in industry:
-        slot['industry'].append(ind)
-    for qt in question_type:
-        slot['question_type'].append(qt)
-    for p in process:
-        slot['process'].append(p)
-    for pt in process_type:
-        slot['process_type'].append(pt)
+    for key, value in new_slot.items():
+        if len(value) >= 1:
+            old_slot[key] = []
+            for v in value:
+                old_slot[key].append(v)
 
-    industry = slot['industry']
-    question_type = slot['question_type']
-    process_type = slot['process_type']
-    process = slot['process']
+    # 使用copy否则会是深拷贝的状态
+    industry = old_slot['industry'].copy()
+    question_type = old_slot['question_type'].copy()
+    process_type = old_slot['process_type'].copy()
+    process = old_slot['process'].copy()
 
     slot = {
         'industry': [],
@@ -153,9 +152,24 @@ def slot2add(industry, question_type, process, process_type, answers, slot):
         'process_type': []
     }
 
-    answers, df, slot = slot_match(industry, question_type, process, process_type, answers=answers, slot=slot)
+    answers, df, _ = slot2match(industry, question_type, process, process_type, answers=answers, slot=slot)
 
-    return answers, df, slot
+    return answers, df, old_slot
+
+
+def slot2replace(slot, new_slot):
+    """该函数的目的是为了在同一个用户下如果用户承接上文中的槽数据
+    进行新一轮的问询那么需要将新的关键词填充到槽数据内部进行处理检索
+    params:
+    slot: 上文中的槽数据
+    new_slot: 新一轮的待填充的关键词
+    """
+    for key, value in new_slot.items():
+        if len(value) >= 1:
+            slot[key] = []
+            for v in value:
+                slot[key].append(v)
+    return slot
 
 
 def check_slot(keywords):
@@ -166,7 +180,6 @@ def check_slot(keywords):
     则该函数会检查'铸造'是否在槽‘industry’内部,‘焊接’是否在槽‘process‘内部如果均在则返回正确否则
     返回错误，会进行下一步的关键相似度匹配计算找到最合适的关键词替换到对应的槽内部
     """
-    print(f"包含错误关键词的槽数据: {keywords}")
     new_keywords = {}
     for key, values in keywords.items():
         new_keywords[key] = []
@@ -179,6 +192,5 @@ def check_slot(keywords):
                 else:
                     v = get_Top1similarity_word(word=v, similarity_words=check_key4values)
                 new_keywords[key].append(v)
-    print(f"最终获取的正确关键词: {new_keywords}")
     return new_keywords
 
